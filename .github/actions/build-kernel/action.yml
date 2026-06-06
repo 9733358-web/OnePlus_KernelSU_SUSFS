@@ -1201,6 +1201,78 @@ runs:
             r"\1    struct selinux_policy *policy = selinux_state.policy;\n",
             s,
         )
+        if "int handle_sepolicy_ksun(unsigned long arg3, void __user *arg4)" not in s and \
+                "int handle_sepolicy_wksu(unsigned long arg3, void __user *arg4)" in s:
+            s += """
+
+        int handle_sepolicy_ksun(unsigned long arg3, void __user *arg4)
+        {
+            return handle_sepolicy_wksu(arg3, arg4);
+        }
+        """
+
+        p.write_text(s)
+
+        p = Path("kernel/selinux/sepolicy.c")
+        s = p.read_text()
+
+        if "struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)" not in s:
+            s += """
+
+        struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)
+        {
+            return old_pol;
+        }
+
+        void ksu_destroy_sepolicy(struct selinux_policy *pol)
+        {
+        }
+        """
+
+        p.write_text(s)
+
+        p = Path("kernel/selinux/selinux.c")
+        s = p.read_text()
+
+        if "ksu_selinux_hide_running __read_mostly" not in s:
+            if "#include <linux/jump_label.h>" not in s:
+                s = s.replace("#include \"linux/version.h\"\n",
+                              "#include \"linux/version.h\"\n#include <linux/jump_label.h>\n", 1)
+            insert_after = "#include \"../ksu.h\"\n"
+            compat = """
+        bool ksu_selinux_hide_enabled __read_mostly = false;
+        bool ksu_selinux_hide_running __read_mostly = false;
+        struct selinux_policy *backup_sepolicy = NULL;
+        DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
+        struct page *fake_status = NULL;
+
+        void initialize_fake_status(void)
+        {
+        }
+
+        """
+            if insert_after in s:
+                s = s.replace(insert_after, insert_after + compat, 1)
+            else:
+                s = compat + s
+
+        p.write_text(s)
+
+        p = Path("kernel/kernel_umount.c")
+        s = p.read_text()
+
+        s = s.replace(
+            "#if !defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)\n"
+            "static void umount_tw_func(struct callback_head *cb)",
+            "static void umount_tw_func(struct callback_head *cb)",
+            1,
+        )
+        s = s.replace(
+            "#endif // #if defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)\n\n"
+            "void ksu_kernel_umount_init(void)",
+            "void ksu_kernel_umount_init(void)",
+            1,
+        )
 
         p.write_text(s)
 
@@ -1225,10 +1297,9 @@ runs:
                 s = s.replace("#include <linux/version.h>\n",
                               "#include <linux/version.h>\n#include <linux/jump_label.h>\n", 1)
             marker = "#ifndef KSU_KPROBES_HOOK\n"
-            static_keys = """#ifdef CONFIG_KSU_SUSFS
+            static_keys = """
         DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
         DEFINE_STATIC_KEY_TRUE(ksu_is_input_hook_enabled);
-        #endif
 
         """
             if marker in s:
@@ -1239,7 +1310,6 @@ runs:
         if "void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)" not in s:
             marker = "\nstatic void stop_init_rc_hook()\n"
             vfs_fstat = r"""
-        #ifdef CONFIG_KSU_SUSFS
         void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
         {
             loff_t new_size = *kstat_size_ptr + ksu_rc_len;
@@ -1255,7 +1325,6 @@ runs:
             }
             fput(file);
         }
-        #endif
         """
             if marker in s:
                 s = s.replace(marker, "\n" + vfs_fstat + marker, 1)
@@ -1350,7 +1419,23 @@ runs:
         fi
         
         patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
-        
+        if [ "${{ inputs.ksu_type }}" = "KSUN" ] && [ "$susfs_version" = "v2.1.0" ]; then
+          python3 <<'PY'
+        from pathlib import Path
+        import re
+
+        p = Path("security/selinux/ss/services.c")
+        s = p.read_text()
+
+        s = re.sub(r"\bstatic\s+(int\s+security_context_to_sid_with_policy\()", r"\1", s)
+        s = re.sub(r"\bstatic\s+(int\s+security_sid_to_context_with_policy\()", r"\1", s)
+        s = re.sub(r"\bstatic\s+(void\s+__nocfi\s+security_compute_av_user_with_policy\()", r"\1", s)
+        s = re.sub(r"\bstatic\s+(void\s+security_compute_av_user_with_policy\()", r"\1", s)
+
+        p.write_text(s)
+        PY
+        fi
+
         # Revert Fake kernel patch
         if [ "$fake_patched_expand" = 1 ]; then
           if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
