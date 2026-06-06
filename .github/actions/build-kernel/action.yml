@@ -1260,35 +1260,35 @@ runs:
         if ! grep -q "ksu_handle_sys_read" fs/read_write.c; then
           echo "Adding missing KSU read hook fallback"
           python3 <<'PY'
-from pathlib import Path
+        from pathlib import Path
 
-p = Path("fs/read_write.c")
-s = p.read_text()
+        p = Path("fs/read_write.c")
+        s = p.read_text()
 
-decl = """#ifdef CONFIG_KSU
-extern bool ksu_vfs_read_hook __read_mostly;
-extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd,
-\t\t\t\tchar __user **buf_ptr, size_t *count_ptr);
-#endif
+        decl = """#ifdef CONFIG_KSU
+        extern bool ksu_vfs_read_hook __read_mostly;
+        extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd,
+        \t\t\t\tchar __user **buf_ptr, size_t *count_ptr);
+        #endif
 
-"""
-marker = "SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)\n"
-body = marker + "{\n"
-hook = """#ifdef CONFIG_KSU
-\tif (unlikely(ksu_vfs_read_hook))
-\t\tksu_handle_sys_read(fd, &buf, &count);
-#endif
-"""
+        """
+        marker = "SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)\n"
+        body = marker + "{\n"
+        hook = """#ifdef CONFIG_KSU
+        \tif (unlikely(ksu_vfs_read_hook))
+        \t\tksu_handle_sys_read(fd, &buf, &count);
+        #endif
+        """
 
-if marker not in s:
-    raise SystemExit("read syscall marker not found in fs/read_write.c")
-if body not in s:
-    raise SystemExit("read syscall body marker not found in fs/read_write.c")
+        if marker not in s:
+            raise SystemExit("read syscall marker not found in fs/read_write.c")
+        if body not in s:
+            raise SystemExit("read syscall body marker not found in fs/read_write.c")
 
-s = s.replace(marker, decl + marker, 1)
-s = s.replace(body, body + hook, 1)
-p.write_text(s)
-PY
+        s = s.replace(marker, decl + marker, 1)
+        s = s.replace(body, body + hook, 1)
+        p.write_text(s)
+        PY
         fi
 
         if grep -q "ksu_handle_execve_ksud" fs/exec.c && grep -q "ksu_handle_sys_read" fs/read_write.c && grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
