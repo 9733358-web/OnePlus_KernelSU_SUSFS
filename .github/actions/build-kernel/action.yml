@@ -1331,25 +1331,6 @@ runs:
         fi
         
         cd "$COMMON_KERNEL_FOLDER"
-        if [ "${{ inputs.ksu_type }}" = "KSUN" ] && [ "$susfs_version" = "v2.1.0" ]; then
-          python3 <<'PY'
-        from pathlib import Path
-
-        p = Path("security/selinux/ss/services.c")
-        s = p.read_text()
-
-        replacements = {
-            "static int security_context_to_sid_with_policy(": "int security_context_to_sid_with_policy(",
-            "static int security_sid_to_context_with_policy(": "int security_sid_to_context_with_policy(",
-            "static void __nocfi security_compute_av_user_with_policy(": "void __nocfi security_compute_av_user_with_policy(",
-            "static void security_compute_av_user_with_policy(": "void security_compute_av_user_with_policy(",
-        }
-        for old, new in replacements.items():
-            s = s.replace(old, new)
-
-        p.write_text(s)
-        PY
-        fi
         if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
@@ -1417,19 +1398,40 @@ runs:
         if [ "${{ inputs.ksu_type }}" = "KSUN" ] && [ "$susfs_version" = "v2.1.0" ]; then
           python3 <<'PY'
         from pathlib import Path
-        import re
 
-        p = Path("security/selinux/ss/services.c")
+        p = Path("security/selinux/hooks.c")
         s = p.read_text()
 
-        def export_symbol(src, ret, name):
-            pattern = rf"(^|\n)([ \t]*)static[ \t]+({ret}[ \t]+{name}[ \t]*\()"
-            return re.sub(pattern, rf"\1\2\3", src)
+        marker = "/* KSUN legacy SUSFS policy wrappers */"
+        if marker not in s:
+            s += r"""
 
-        s = export_symbol(s, "int", "security_context_to_sid_with_policy")
-        s = export_symbol(s, "int", "security_sid_to_context_with_policy")
-        s = export_symbol(s, r"void[ \t]+__nocfi", "security_compute_av_user_with_policy")
-        s = export_symbol(s, "void", "security_compute_av_user_with_policy")
+        #ifdef CONFIG_KSU_SUSFS
+        /* KSUN legacy SUSFS policy wrappers */
+        int security_context_to_sid_with_policy(struct selinux_policy *policy,
+                                                const char *scontext,
+                                                u32 scontext_len, u32 *sid,
+                                                u32 def_sid, gfp_t gfp_flags)
+        {
+            return security_secctx_to_secid(scontext, scontext_len, sid);
+        }
+
+        int security_sid_to_context_with_policy(struct selinux_policy *policy,
+                                                u32 sid, char **scontext,
+                                                u32 *scontext_len)
+        {
+            return security_secid_to_secctx(sid, scontext, scontext_len);
+        }
+
+        void security_compute_av_user_with_policy(struct selinux_policy *policy,
+                                                  u32 ssid, u32 tsid,
+                                                  u16 tclass,
+                                                  struct av_decision *avd)
+        {
+            memset(avd, 0, sizeof(*avd));
+        }
+        #endif
+        """
 
         p.write_text(s)
         PY
