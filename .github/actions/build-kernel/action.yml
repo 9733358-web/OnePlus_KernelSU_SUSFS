@@ -1095,6 +1095,23 @@ runs:
             exit 1
             ;;
         esac
+
+        if [ "${{ inputs.ksu_type }}" = "KSUN" ] && [ "$susfs_version" = "v2.1.0" ]; then
+          echo "Applying KSUN SUSFS v2.1.0 compatibility fixes"
+          cd "$KSUN_FOLDER"
+          python3 <<'PY'
+        from pathlib import Path
+
+        p = Path("kernel/supercalls.c")
+        s = p.read_text()
+
+        s = s.replace("susfs_set_i_state_on_external_dir(arg);",
+                      "/* Deprecated by SUSFS v2.1.0 for this branch. */")
+        s = s.replace("susfs_add_try_umount(arg);", "add_try_umount(arg);")
+
+        p.write_text(s)
+        PY
+        fi
         
         cd "$COMMON_KERNEL_FOLDER"
         if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
@@ -1290,6 +1307,29 @@ runs:
         p.write_text(s)
         PY
         fi
+
+        python3 <<'PY'
+        from pathlib import Path
+        import re
+
+        p = Path("fs/stat.c")
+        s = p.read_text()
+
+        if "ksu_handle_stat(int *dfd, struct filename **filename" in s:
+            s = re.sub(
+                r"\n#ifdef CONFIG_KSU\nextern (?:__attribute__\(\([^)]*\)\) )?int ksu_handle_stat\(int \*dfd, const char __user \*\*filename_user,\n\s*int \*flags\);\n#endif\n",
+                "\n",
+                s,
+                count=1,
+            )
+            s = s.replace(
+                "#ifdef CONFIG_KSU\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif\n",
+                "",
+                1,
+            )
+
+        p.write_text(s)
+        PY
 
         if grep -q "ksu_handle_execveat" fs/exec.c && { grep -Fq "ksu_handle_sys_read(fd);" fs/read_write.c || grep -Fq "ksu_handle_sys_read(fd, &buf, &count)" fs/read_write.c; } && grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
           echo "Manual KSU hooks detected"
