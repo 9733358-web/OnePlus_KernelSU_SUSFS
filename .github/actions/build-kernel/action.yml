@@ -1204,7 +1204,6 @@ runs:
         if "int handle_sepolicy_ksun(unsigned long arg3, void __user *arg4)" not in s:
             s += """
 
-        extern int handle_sepolicy_wksu(unsigned long arg3, void __user *arg4);
         int handle_sepolicy_ksun(unsigned long arg3, void __user *arg4)
         {
             return handle_sepolicy_wksu(arg3, arg4);
