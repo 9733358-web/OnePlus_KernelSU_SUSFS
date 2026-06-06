@@ -1085,6 +1085,24 @@ runs:
                 echo "Patching Multi-manager sepolicy Support for SusFS kernel!"
                 apply_optional_ksun_patch "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/multi_sepolicy_fix.patch"
               fi
+              stable_patch_dir="$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/stable/$susfs_version"
+              if [ -d "$stable_patch_dir" ]; then
+                echo "Patching legacy KernelSU-Next stable SUSFS fixes!"
+                for patch_name in \
+                  fix_ksu.c.patch \
+                  fix_ksud.c.patch \
+                  fix_kernel_umount.c.patch \
+                  fix_supercalls.c.patch \
+                  fix_rules.c.patch \
+                  fix_Makefile.patch \
+                  multi_sepolicy_fix.patch \
+                  multi_manager.patch \
+                  overwrite_hook_mode.patch \
+                  ksu_toolkit.patch
+                do
+                  apply_optional_ksun_patch "$stable_patch_dir/$patch_name"
+                done
+              fi
             else
               cd "$KSU_FOLDER"
               patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
@@ -1110,10 +1128,46 @@ runs:
         s = s.replace("susfs_add_try_umount(arg);", "add_try_umount(arg);")
 
         p.write_text(s)
+
+        p = Path("kernel/setuid_hook.c")
+        s = p.read_text()
+
+        s = s.replace("extern void susfs_try_umount(uid_t uid);",
+                      "extern void ksu_handle_umount(uid_t old_uid, uid_t current_uid);")
+        s = s.replace("extern void susfs_reorder_mnt_id(void);",
+                      "/* SUSFS v2.1.0 handles mount id ordering internally. */")
+        s = s.replace("extern void susfs_run_sus_path_loop(uid_t uid);",
+                      "/* SUSFS v2.1.0 handles sus path looping internally. */")
+        s = s.replace("susfs_try_umount(new_uid);", "ksu_handle_umount(old_uid, new_uid);")
+        s = s.replace("susfs_reorder_mnt_id();",
+                      "/* SUSFS v2.1.0 handles mount id ordering internally. */")
+        s = s.replace("susfs_run_sus_path_loop(new_uid);",
+                      "/* SUSFS v2.1.0 handles sus path looping internally. */")
+
+        p.write_text(s)
         PY
         fi
         
         cd "$COMMON_KERNEL_FOLDER"
+        if [ "${{ inputs.ksu_type }}" = "KSUN" ] && [ "$susfs_version" = "v2.1.0" ]; then
+          python3 <<'PY'
+        from pathlib import Path
+
+        p = Path("security/selinux/ss/services.c")
+        s = p.read_text()
+
+        replacements = {
+            "static int security_context_to_sid_with_policy(": "int security_context_to_sid_with_policy(",
+            "static int security_sid_to_context_with_policy(": "int security_sid_to_context_with_policy(",
+            "static void __nocfi security_compute_av_user_with_policy(": "void __nocfi security_compute_av_user_with_policy(",
+            "static void security_compute_av_user_with_policy(": "void security_compute_av_user_with_policy(",
+        }
+        for old, new in replacements.items():
+            s = s.replace(old, new)
+
+        p.write_text(s)
+        PY
+        fi
         if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
