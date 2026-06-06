@@ -1257,7 +1257,7 @@ runs:
           echo "::warning::Manual KSU hooks patch did not apply fully; checking and repairing known offsets"
         fi
 
-        if ! grep -Fq "ksu_handle_sys_read(fd, &buf, &count)" fs/read_write.c; then
+        if ! grep -Fq "ksu_handle_sys_read(fd);" fs/read_write.c && ! grep -Fq "ksu_handle_sys_read(fd, &buf, &count)" fs/read_write.c; then
           echo "Adding missing KSU read hook fallback"
           python3 <<'PY'
         from pathlib import Path
@@ -1267,8 +1267,7 @@ runs:
 
         decl = """#ifdef CONFIG_KSU
         extern bool ksu_vfs_read_hook __read_mostly;
-        extern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd,
-        \t\t\t\tchar __user **buf_ptr, size_t *count_ptr);
+        extern __attribute__((cold)) void ksu_handle_sys_read(unsigned int fd);
         #endif
 
         """
@@ -1276,7 +1275,7 @@ runs:
         body = marker + "{\n"
         hook = """#ifdef CONFIG_KSU
         \tif (unlikely(ksu_vfs_read_hook))
-        \t\tksu_handle_sys_read(fd, &buf, &count);
+        \t\tksu_handle_sys_read(fd);
         #endif
         """
 
@@ -1285,13 +1284,14 @@ runs:
         if body not in s:
             raise SystemExit("read syscall body marker not found in fs/read_write.c")
 
-        s = s.replace(marker, decl + marker, 1)
+        if "ksu_handle_sys_read(unsigned int fd)" not in s:
+            s = s.replace(marker, decl + marker, 1)
         s = s.replace(body, body + hook, 1)
         p.write_text(s)
         PY
         fi
 
-        if grep -q "ksu_handle_execveat" fs/exec.c && grep -Fq "ksu_handle_sys_read(fd, &buf, &count)" fs/read_write.c && grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+        if grep -q "ksu_handle_execveat" fs/exec.c && { grep -Fq "ksu_handle_sys_read(fd);" fs/read_write.c || grep -Fq "ksu_handle_sys_read(fd, &buf, &count)" fs/read_write.c; } && grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
           echo "Manual KSU hooks detected"
         else
           echo "::error::Required manual KSU hooks were not detected"
