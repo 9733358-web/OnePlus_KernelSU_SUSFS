@@ -1089,7 +1089,6 @@ runs:
               if [ -d "$stable_patch_dir" ]; then
                 echo "Patching legacy KernelSU-Next stable SUSFS fixes!"
                 for patch_name in \
-                  fix_rules.c.patch \
                   fix_Makefile.patch \
                   multi_sepolicy_fix.patch \
                   multi_manager.patch \
@@ -1115,6 +1114,7 @@ runs:
           cd "$KSUN_FOLDER"
           python3 <<'PY'
         from pathlib import Path
+        import re
 
         p = Path("kernel/supercalls.c")
         s = p.read_text()
@@ -1139,6 +1139,51 @@ runs:
                       "/* SUSFS v2.1.0 handles mount id ordering internally. */")
         s = s.replace("susfs_run_sus_path_loop(new_uid);",
                       "/* SUSFS v2.1.0 handles sus path looping internally. */")
+
+        p.write_text(s)
+
+        p = Path("kernel/selinux/rules.c")
+        s = p.read_text()
+
+        reset_re = re.compile(
+            r"\n#if \(LINUX_VERSION_CODE >= KERNEL_VERSION\(6, 4, 0\)\)\n"
+            r"extern int avc_ss_reset\(u32 seqno\);\n"
+            r"#else\n"
+            r"extern int avc_ss_reset\(struct selinux_avc \*avc, u32 seqno\);\n"
+            r"#endif\n"
+            r"// reset avc cache table, otherwise the new rules will not take effect if already denied\n"
+            r"static void reset_avc_cache\(\)\n"
+            r"\{\n"
+            r"#if \(LINUX_VERSION_CODE >= KERNEL_VERSION\(6, 4, 0\)\)\n"
+            r"    avc_ss_reset\(0\);\n"
+            r"    selnl_notify_policyload\(0\);\n"
+            r"    selinux_status_update_policyload\(0\);\n"
+            r"#else\n"
+            r"    struct selinux_avc \*avc = selinux_state\.avc;\n"
+            r"    avc_ss_reset\(avc, 0\);\n"
+            r"    selnl_notify_policyload\(0\);\n"
+            r"    selinux_status_update_policyload\(&selinux_state, 0\);\n"
+            r"#endif\n"
+            r"    selinux_xfrm_notify_policyload\(\);\n"
+            r"\}\n"
+        )
+        matches = list(reset_re.finditer(s))
+        if len(matches) > 1:
+            keep = matches[0]
+            parts = [s[:keep.end()]]
+            last = keep.end()
+            for match in matches[1:]:
+                parts.append(s[last:match.start()])
+                last = match.end()
+            parts.append(s[last:])
+            s = "".join(parts)
+
+        s = re.sub(
+            r"(int handle_sepolicy(?:_ksun)?\(unsigned long arg3, void __user \*arg4\)\n\{\n\s*struct policydb \*db;\n)"
+            r"(?!\s*struct selinux_policy \*policy)",
+            r"\1    struct selinux_policy *policy = selinux_state.policy;\n",
+            s,
+        )
 
         p.write_text(s)
 
