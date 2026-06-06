@@ -2521,6 +2521,7 @@ runs:
 
     - name: Save ccache cache
       if: always() && steps.build_kernel_step.conclusion == 'success'
+      continue-on-error: true
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.CCACHE_DIR }}
@@ -2533,6 +2534,7 @@ runs:
 
     - name: Save LTO LD cache
       if: always() && ${{ env.OP_LTO != 'none' }} && steps.build_kernel_step.conclusion == 'success'
+      continue-on-error: true
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.LDCACHE_DIR }}
