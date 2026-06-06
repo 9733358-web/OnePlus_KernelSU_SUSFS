@@ -1310,23 +1310,36 @@ runs:
 
         python3 <<'PY'
         from pathlib import Path
-        import re
 
         p = Path("fs/stat.c")
         s = p.read_text()
 
         if "ksu_handle_stat(int *dfd, struct filename **filename" in s:
-            s = re.sub(
-                r"\n#ifdef CONFIG_KSU\nextern (?:__attribute__\(\([^)]*\)\) )?int ksu_handle_stat\(int \*dfd, const char __user \*\*filename_user,\n\s*int \*flags\);\n#endif\n",
-                "\n",
-                s,
-                count=1,
-            )
-            s = s.replace(
-                "#ifdef CONFIG_KSU\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif\n",
-                "",
-                1,
-            )
+            lines = s.splitlines(keepends=True)
+            out = []
+            i = 0
+            removed = 0
+
+            while i < len(lines):
+                window = "".join(lines[i:i + 6])
+                if lines[i].strip() == "#ifdef CONFIG_KSU" and (
+                    "ksu_handle_stat(int *dfd, const char __user **filename_user" in window or
+                    "ksu_handle_stat(&dfd, &filename, &flag);" in window
+                ):
+                    removed += 1
+                    i += 1
+                    while i < len(lines):
+                        if lines[i].strip() == "#endif":
+                            i += 1
+                            break
+                        i += 1
+                    continue
+
+                out.append(lines[i])
+                i += 1
+
+            s = "".join(out)
+            print(f"Removed legacy KSU stat hook blocks: {removed}")
 
         p.write_text(s)
         PY
