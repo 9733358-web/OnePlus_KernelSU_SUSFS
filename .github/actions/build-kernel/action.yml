@@ -1257,7 +1257,7 @@ runs:
           echo "::warning::Manual KSU hooks patch did not apply fully; checking and repairing known offsets"
         fi
 
-        if ! grep -q "ksu_handle_sys_read" fs/read_write.c; then
+        if ! grep -Fq "ksu_handle_sys_read(fd, &buf, &count)" fs/read_write.c; then
           echo "Adding missing KSU read hook fallback"
           python3 <<'PY'
         from pathlib import Path
@@ -1291,7 +1291,7 @@ runs:
         PY
         fi
 
-        if grep -q "ksu_handle_execve_ksud" fs/exec.c && grep -q "ksu_handle_sys_read" fs/read_write.c && grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+        if grep -q "ksu_handle_execveat" fs/exec.c && grep -Fq "ksu_handle_sys_read(fd, &buf, &count)" fs/read_write.c && grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
           echo "Manual KSU hooks detected"
         else
           echo "::error::Required manual KSU hooks were not detected"
