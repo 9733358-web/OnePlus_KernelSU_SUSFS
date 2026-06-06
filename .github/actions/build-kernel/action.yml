@@ -1178,6 +1178,23 @@ runs:
             parts.append(s[last:])
             s = "".join(parts)
 
+        sig = "static void reset_avc_cache()\n"
+        first = s.find(sig)
+        if first != -1:
+            search = s.find(sig, first + len(sig))
+            while search != -1:
+                start = s.rfind("\n", 0, search)
+                if start == -1:
+                    start = search
+                prev = s.rfind("\n", 0, start)
+                if prev != -1 and s[prev + 1:start].startswith("// reset avc cache"):
+                    start = prev
+                end = s.find("\n}\n", search)
+                if end == -1:
+                    raise SystemExit("Could not find end of duplicate reset_avc_cache")
+                s = s[:start] + s[end + 3:]
+                search = s.find(sig, first + len(sig))
+
         s = re.sub(
             r"(int handle_sepolicy(?:_ksun)?\(unsigned long arg3, void __user \*arg4\)\n\{\n\s*struct policydb \*db;\n)"
             r"(?!\s*struct selinux_policy \*policy)",
