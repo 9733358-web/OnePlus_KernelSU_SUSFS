@@ -1089,10 +1089,6 @@ runs:
               if [ -d "$stable_patch_dir" ]; then
                 echo "Patching legacy KernelSU-Next stable SUSFS fixes!"
                 for patch_name in \
-                  fix_ksu.c.patch \
-                  fix_ksud.c.patch \
-                  fix_kernel_umount.c.patch \
-                  fix_supercalls.c.patch \
                   fix_rules.c.patch \
                   fix_Makefile.patch \
                   multi_sepolicy_fix.patch \
@@ -1143,6 +1139,66 @@ runs:
                       "/* SUSFS v2.1.0 handles mount id ordering internally. */")
         s = s.replace("susfs_run_sus_path_loop(new_uid);",
                       "/* SUSFS v2.1.0 handles sus path looping internally. */")
+
+        p.write_text(s)
+
+        p = Path("kernel/ksud.c")
+        s = p.read_text()
+
+        s = s.replace("""#ifdef CONFIG_KSU_SUSFS
+            // - We need to run ksu_handle_execveat_init() at the very end in case the above checks are skipped
+            (void)ksu_handle_execveat_init(filename);
+        #endif // #ifdef CONFIG_KSU_SUSFS
+
+        """, "")
+        s = s.replace("""#ifdef CONFIG_KSU_SUSFS
+            // - We need to run ksu_handle_execveat_init() at the very end in case the above checks are skipped
+            (void)ksu_handle_execveat_init(filename);
+        #endif
+
+        """, "")
+
+        if "DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);" not in s:
+            if "#include <linux/jump_label.h>" not in s:
+                s = s.replace("#include <linux/version.h>\n",
+                              "#include <linux/version.h>\n#include <linux/jump_label.h>\n", 1)
+            marker = "#ifndef KSU_KPROBES_HOOK\n"
+            static_keys = """#ifdef CONFIG_KSU_SUSFS
+        DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
+        DEFINE_STATIC_KEY_TRUE(ksu_is_input_hook_enabled);
+        #endif
+
+        """
+            if marker in s:
+                s = s.replace(marker, static_keys + marker, 1)
+            else:
+                raise SystemExit("KSU_KPROBES_HOOK marker not found in kernel/ksud.c")
+
+        if "void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)" not in s:
+            marker = "\nstatic void stop_init_rc_hook()\n"
+            vfs_fstat = r"""
+        #ifdef CONFIG_KSU_SUSFS
+        void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
+        {
+            loff_t new_size = *kstat_size_ptr + ksu_rc_len;
+            struct file *file = fget(fd);
+
+            if (!file)
+                return;
+
+            if (is_init_rc(file)) {
+                pr_info("stat init.rc");
+                pr_info("adding ksu_rc_len: %lld -> %lld", *kstat_size_ptr, new_size);
+                *kstat_size_ptr = new_size;
+            }
+            fput(file);
+        }
+        #endif
+        """
+            if marker in s:
+                s = s.replace(marker, "\n" + vfs_fstat + marker, 1)
+            else:
+                raise SystemExit("stop_init_rc_hook marker not found in kernel/ksud.c")
 
         p.write_text(s)
         PY
