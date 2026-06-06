@@ -913,6 +913,7 @@ runs:
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_KSU=y
         CONFIG_KSU_KPROBES_HOOK=n
+        CONFIG_KSU_MANUAL_HOOK=y
         EOF
         
         echo "KSUN" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
@@ -1250,9 +1251,9 @@ runs:
         set -euo pipefail
         echo "::group::Apply KSU hooks"
         cd "$COMMON_KERNEL_FOLDER"
-        if patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/scope_min_manual_hooks_v1.4.patch"; then
+        if patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/scope_min_manual_hooks_v1.6.patch"; then
           echo "Manual KSU hooks applied"
-        elif grep -q "ksu_handle_execve_ksud" fs/exec.c && grep -q "ksu_handle_sys_read" fs/read_write.c; then
+        elif grep -q "ksu_handle_execve_ksud" fs/exec.c && grep -q "ksu_handle_sys_read" fs/read_write.c && grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
           echo "Manual KSU hooks already present; continuing"
         else
           echo "::error::Manual KSU hooks patch failed and required hooks were not detected"
